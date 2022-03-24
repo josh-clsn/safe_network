@@ -69,6 +69,36 @@ impl Node {
             operation_id
         );
 
+        let mut waiting_peers = self
+            .pending_data_queries
+            .get(&operation_id)
+            .await
+            .unwrap_or_default();
+
+        // drop if we exceed
+        if waiting_peers.len() > MAX_WAITING_PEERS_PER_QUERY {
+            warn!("Dropping query from {origin:?}, there are more than {MAX_WAITING_PEERS_PER_QUERY} waiting already");
+            return Ok(vec![]);
+        }
+
+        if waiting_peers.contains(&origin) {
+            // This peer was already waiting for response no need to add to pending queue then
+            return Ok(vec![]);
+        }
+
+        let already_waiting_on_response = !waiting_peers.is_empty();
+        let _ = waiting_peers.insert(origin.clone());
+
+        let _prior_value = self
+            .pending_data_queries
+            .set(operation_id, waiting_peers, None)
+            .await;
+
+        if already_waiting_on_response {
+            // no need to send query again.
+            return Ok(vec![]);
+        }
+
         let targets = self.get_adults_holding_data(address.name()).await;
 
         if targets.is_empty() {
@@ -80,43 +110,11 @@ impl Node {
                 .await;
         }
 
-        let mut already_waiting_on_response = false;
-        let mut this_peer_already_waiting_on_response = false;
-        let waiting_peers = if let Some(peers) = self.pending_data_queries.get(&operation_id).await
-        {
-            already_waiting_on_response = true;
-            this_peer_already_waiting_on_response = peers.contains(&origin.clone());
-            peers
-        } else {
-            vec![origin.clone()]
-        };
-
-        if this_peer_already_waiting_on_response {
-            // no need to add to pending queue then
-            return Ok(vec![]);
-        }
-
-        // drop if we exceed
-        if waiting_peers.len() > MAX_WAITING_PEERS_PER_QUERY {
-            warn!("Dropping query from {origin:?}, there are more than {MAX_WAITING_PEERS_PER_QUERY} waiting already");
-            return Ok(vec![]);
-        }
-
         // ensure we only add a pending request when we're actually sending out requests.
         for target in &targets {
             self.liveness
                 .add_a_pending_request_operation(*target, operation_id)
                 .await;
-        }
-
-        let _prior_value = self
-            .pending_data_queries
-            .set(operation_id, waiting_peers, None)
-            .await;
-
-        if already_waiting_on_response {
-            // no need to send query again.
-            return Ok(vec![]);
         }
 
         let msg = SystemMsg::NodeQuery(NodeQuery::Data {

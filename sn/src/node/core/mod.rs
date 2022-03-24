@@ -119,7 +119,7 @@ pub(crate) struct Node {
     // Trackers
     capacity: Capacity,
     liveness: Liveness,
-    pending_data_queries: Arc<Cache<OperationId, Vec<Peer>>>,
+    pending_data_queries: Arc<Cache<OperationId, BTreeSet<Peer>>>,
     // Caches
     ae_backoff_cache: AeBackoffCache,
 }
