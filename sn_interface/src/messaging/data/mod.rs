@@ -250,7 +250,7 @@ impl QueryResponse {
                 Ok(chunk) => chunk_operation_id(chunk.address()),
                 Err(ErrorMsg::ChunkNotFound(name)) => chunk_operation_id(&ChunkAddress(*name)),
                 Err(ErrorMsg::DataNotFound(DataAddress::Bytes(address))) => {
-                    chunk_operation_id(&ChunkAddress(*address.name()))
+                    chunk_operation_id(&ChunkAddress(*address))
                 }
                 Err(ErrorMsg::DataNotFound(another_address)) => {
                     error!(

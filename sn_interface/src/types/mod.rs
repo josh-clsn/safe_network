@@ -29,9 +29,7 @@ mod token;
 pub use connections::{PeerLinks, SendToOneError};
 
 pub use crate::messaging::data::{RegisterCmd, ReplicatedRegisterLog};
-pub use address::{
-    BytesAddress, ChunkAddress, DataAddress, RegisterAddress, ReplicatedDataAddress, Scope,
-};
+pub use address::{ChunkAddress, DataAddress, RegisterAddress, ReplicatedDataAddress, Scope};
 pub use cache::Cache;
 pub use chunk::{Chunk, MAX_CHUNK_SIZE_IN_BYTES};
 pub use errors::{convert_dt_error_to_error_msg, Error, Result};

@@ -6,11 +6,8 @@
 // KIND, either express or implied. Please review the Licences for the specific language governing
 // permissions and limitations relating to use of the SAFE Network Software.
 
-mod bytes;
 mod register;
 
-#[allow(unreachable_pub)]
-pub use self::bytes::BytesAddress;
 #[allow(unreachable_pub)]
 pub use register::RegisterAddress;
 
@@ -33,7 +30,7 @@ pub enum DataAddress {
     ///
     SafeKey(XorName),
     ///
-    Bytes(BytesAddress),
+    Bytes(XorName),
     ///
     Register(RegisterAddress),
 }
@@ -43,7 +40,7 @@ impl DataAddress {
     pub fn name(&self) -> &XorName {
         match self {
             Self::SafeKey(address) => address,
-            Self::Bytes(address) => address.name(),
+            Self::Bytes(address) => address,
             Self::Register(address) => address.name(),
         }
     }
@@ -61,7 +58,7 @@ impl DataAddress {
     pub fn is_public(self) -> bool {
         match self {
             Self::SafeKey(_) => true,
-            Self::Bytes(address) => address.is_public(),
+            Self::Bytes(_) => true,
             Self::Register(address) => address.is_public(),
         }
     }
@@ -87,8 +84,8 @@ impl DataAddress {
     }
 
     ///
-    pub fn bytes(name: XorName, scope: Scope) -> DataAddress {
-        DataAddress::Bytes(BytesAddress::new(name, scope))
+    pub fn bytes(name: XorName) -> DataAddress {
+        DataAddress::Bytes(name)
     }
 
     ///
@@ -147,12 +144,12 @@ impl ChunkAddress {
 
 #[cfg(test)]
 mod tests {
-    use crate::types::{BytesAddress, DataAddress, Result};
+    use crate::types::{DataAddress, Result};
 
     #[test]
     fn zbase32_encode_decode_chunk_address() -> Result<()> {
         let name = xor_name::rand::random();
-        let address = DataAddress::Bytes(BytesAddress::Public(name));
+        let address = DataAddress::Bytes(name);
         let encoded = address.encode_to_zbase32()?;
         let decoded = DataAddress::decode_from_zbase32(&encoded)?;
         assert_eq!(address, decoded);
