@@ -20,8 +20,8 @@ pub use self::{
     errors::{Error, Result},
     query::DataQuery,
     register::{
-        CreateRegister, DeleteRegister, EditRegister, ExtendRegister, RegisterCmd, RegisterQuery,
-        SignedRegisterCreate, SignedRegisterDelete, SignedRegisterEdit, SignedRegisterExtend,
+        CreateRegister, EditRegister, ExtendRegister, RegisterCmd, RegisterQuery,
+        SignedRegisterCreate, SignedRegisterEdit, SignedRegisterExtend,
     },
 };
 

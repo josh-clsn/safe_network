@@ -11,9 +11,9 @@ use crate::dbs::{
 };
 use sn_interface::messaging::{
     data::{
-        CreateRegister, DeleteRegister, EditRegister, ExtendRegister, OperationId, RegisterCmd,
-        RegisterQuery, RegisterStoreExport, ReplicatedRegisterLog, SignedRegisterCreate,
-        SignedRegisterDelete, SignedRegisterEdit, SignedRegisterExtend,
+        CreateRegister, EditRegister, ExtendRegister, OperationId, RegisterCmd, RegisterQuery,
+        RegisterStoreExport, ReplicatedRegisterLog, SignedRegisterCreate, SignedRegisterEdit,
+        SignedRegisterExtend,
     },
     system::NodeQueryResponse,
     SectionAuth, VerifyAuthority,
@@ -177,16 +177,6 @@ impl RegisterStorage {
                         if verification.is_err() {
                             error!(
                                 "Invalid signature found for a cmd stored in db: {:?}",
-                                stored_cmd
-                            );
-                            return None;
-                        }
-                    }
-                    RegisterCmd::Delete(SignedRegisterDelete { op, auth }) => {
-                        let verification = auth.verify_authority(serialize(&op).ok()?);
-                        if verification.is_err() {
-                            error!(
-                                "Invalid signature found for cmd stored in db: {:?}",
                                 stored_cmd
                             );
                             return None;
@@ -372,38 +362,6 @@ impl RegisterStorage {
                 }
 
                 result
-            }
-            Delete(SignedRegisterDelete { op, auth }) => {
-                let DeleteRegister(address) = &op;
-                if address.is_public() {
-                    return Err(Error::CannotDeletePublicData(DataAddress::Register(
-                        *address,
-                    )));
-                }
-                let public_key = auth.public_key;
-                let _ = auth
-                    .verify_authority(serialize(&op)?)
-                    .or(Err(Error::InvalidSignature(public_key)))?;
-
-                match self.try_load_cache_entry(&key).await {
-                    Err(Error::KeyNotFound(_)) => {
-                        trace!("Register was already deleted, or never existed..");
-                        Ok(())
-                    }
-                    Ok(entry) => {
-                        let read_only = entry.state.read().await;
-                        // TODO - Register::check_permission() doesn't support Delete yet in safe-nd
-                        // register.check_permission(action, Some(public_key))?;
-                        if User::Key(public_key) != read_only.owner() {
-                            Err(Error::InvalidOwner(public_key))
-                        } else {
-                            info!("Deleting Register");
-                            self.drop_register_key(key).await?;
-                            Ok(())
-                        }
-                    }
-                    _ => Err(Error::InvalidStore),
-                }
             }
             Extend {
                 cmd: SignedRegisterExtend { op, auth },
@@ -645,7 +603,10 @@ impl RegisterStorage {
                             tag,
                             size,
                             policy,
-                        } => Some((Register::new(name, tag, policy, size), section_auth)),
+                        } => Some((
+                            Register::new(*policy.owner(), name, tag, policy, size),
+                            section_auth,
+                        )),
                         CreateRegister::Populated(instance) => {
                             if instance.size() > (u16::MAX as u64) {
                                 // this would mean the instance has been modified on disk outside of the software
@@ -662,10 +623,6 @@ impl RegisterStorage {
                     if let Some((reg, _)) = &mut hydrated_register {
                         reg.apply_op(edit).map_err(Error::NetworkData)?
                     }
-                }
-                Delete(SignedRegisterDelete { .. }) => {
-                    // should not be reachable, since we don't append these ops
-                    return Err(Error::KeyNotFound(key.to_string()));
                 }
                 Extend {
                     cmd:
@@ -715,8 +672,7 @@ mod test {
         system::NodeQueryResponse,
         SectionAuth, ServiceAuth,
     };
-    use sn_interface::types::register::{EntryHash, Policy, PrivatePolicy, PublicPolicy};
-    use sn_interface::types::DataAddress;
+    use sn_interface::types::register::{EntryHash, Policy};
     use sn_interface::types::{register::User, Keypair};
 
     use rand::Rng;
@@ -725,48 +681,6 @@ mod test {
 
     #[tokio::test(flavor = "multi_thread")]
     async fn test_register_write() -> Result<()> {
-        register_write(create_private_register).await?;
-        register_write(create_public_register).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_register_delete() -> Result<()> {
-        register_delete(create_private_register).await?;
-        register_delete(create_public_register).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_register_export() -> Result<()> {
-        register_export(create_private_register).await?;
-        register_export(create_public_register).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_register_non_existing_entry() -> Result<()> {
-        register_non_existing_entry(create_private_register).await?;
-        register_non_existing_entry(create_public_register).await?;
-
-        Ok(())
-    }
-
-    #[tokio::test(flavor = "multi_thread")]
-    async fn test_register_non_existing_permissions() -> Result<()> {
-        register_non_existing_permissions(create_private_register).await?;
-        register_non_existing_permissions(create_public_register).await?;
-
-        Ok(())
-    }
-
-    async fn register_write<F>(create_register: F) -> Result<()>
-    where
-        F: Fn() -> Result<(RegisterCmd, User)>,
-    {
         // setup store
         let store = new_store()?;
 
@@ -800,42 +714,8 @@ mod test {
         Ok(())
     }
 
-    async fn register_delete<F>(create_register: F) -> Result<()>
-    where
-        F: Fn() -> Result<(RegisterCmd, User)>,
-    {
-        // setup store
-        let store = new_store()?;
-
-        // create register
-        let (cmd, authority) = create_register()?;
-        let _ = store.write(cmd.clone()).await?;
-
-        // try remove it
-        let _ = store.drop_register_key(cmd.dst_address().id()?).await?;
-
-        // should not get the removed register
-        let res = store
-            .read(&RegisterQuery::Get(cmd.dst_address()), authority)
-            .await;
-
-        use sn_interface::messaging::data::Error as MsgError;
-
-        match res {
-            NodeQueryResponse::GetRegister((Ok(_), _)) => panic!("Was not removed!"),
-            NodeQueryResponse::GetRegister((Err(MsgError::DataNotFound(addr)), _)) => {
-                assert_eq!(addr, DataAddress::Register(cmd.dst_address()))
-            }
-            e => panic!("Unexpected response! {:?}", e),
-        }
-
-        Ok(())
-    }
-
-    async fn register_export<F>(create_register: F) -> Result<()>
-    where
-        F: Fn() -> Result<(RegisterCmd, User)>,
-    {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_register_export() -> Result<()> {
         // setup store
         let store = new_store()?;
 
@@ -880,10 +760,8 @@ mod test {
         Ok(())
     }
 
-    async fn register_non_existing_entry<F>(create_register: F) -> Result<()>
-    where
-        F: Fn() -> Result<(RegisterCmd, User)>,
-    {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_register_non_existing_entry() -> Result<()> {
         // setup store
         let store = new_store()?;
 
@@ -911,10 +789,8 @@ mod test {
         Ok(())
     }
 
-    async fn register_non_existing_permissions<F>(create_register: F) -> Result<()>
-    where
-        F: Fn() -> Result<(RegisterCmd, User)>,
-    {
+    #[tokio::test(flavor = "multi_thread")]
+    async fn test_register_non_existing_permissions() -> Result<()> {
         // setup store
         let store = new_store()?;
 
@@ -960,21 +836,12 @@ mod test {
         (authority, keypair)
     }
 
-    fn create_private_register() -> Result<(RegisterCmd, User)> {
+    fn create_register() -> Result<(RegisterCmd, User)> {
         let (authority, keypair) = random_user();
-        let policy = Policy::Private(PrivatePolicy {
+        let policy = Policy {
             owner: authority,
             permissions: Default::default(),
-        });
-        Ok((create_reg_w_policy(policy, keypair)?, authority))
-    }
-
-    fn create_public_register() -> Result<(RegisterCmd, User)> {
-        let (authority, keypair) = random_user();
-        let policy = Policy::Public(PublicPolicy {
-            owner: authority,
-            permissions: Default::default(),
-        });
+        };
         Ok((create_reg_w_policy(policy, keypair)?, authority))
     }
 
